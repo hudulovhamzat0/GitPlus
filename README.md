@@ -86,11 +86,18 @@
 
 ---
 
+## 📦 Download
+
+**Latest Windows EXE:**  
+👉 [Releases & Download EXE](https://github.com/hudulovhamzat0/GitPlus/releases) 👈
+
+---
+
 ## 👤 Author
 
 **Hamzat Hudulov**  
 GitHub: [hudulovhamzat0](https://github.com/hudulovhamzat0)  
-Email: hudulov@tuta.com
+Email: hudulov@tuta.io
 
 ---
 
