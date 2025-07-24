@@ -72,8 +72,8 @@
 
 ## 📸 Screenshots
 
-<img src="screenshot.png" alt="Main UI" width="700"/>
-*(Add your own screenshot here)*
+<img src="photo.png" alt="Main UI" width="700"/>
+
 
 ---
 
