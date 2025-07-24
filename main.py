@@ -5,7 +5,7 @@ import os
 import threading
 import shutil
 import json  # For settings persistence
-
+#coded by Hudulov Hamzat
 class ToolTip:
     def __init__(self, widget, text):
         self.widget = widget
