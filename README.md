@@ -90,7 +90,7 @@
 
 **Hamzat Hudulov**  
 GitHub: [hudulovhamzat0](https://github.com/hudulovhamzat0)  
-Email: hamzathudulov@gmail.com
+Email: hudulov@tuta.com
 
 ---
 
