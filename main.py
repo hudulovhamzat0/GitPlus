@@ -4,8 +4,8 @@ import subprocess
 import os
 import threading
 import shutil
-import json  # For settings persistence
-#coded by Hudulov Hamzat
+import json
+
 class ToolTip:
     def __init__(self, widget, text):
         self.widget = widget
@@ -40,13 +40,12 @@ class GitPushGUI:
         self.root.configure(bg="#2b2b2b")
         self.repo_path = ""
         self.git_path = self.find_git_executable()
-        self.all_buttons = []  # Will be filled in setup_ui
+        self.all_buttons = []
         self.status_var = tk.StringVar()
         self.status_var.set("")
         self.setup_ui()
         self.setup_tags()
         self.load_settings()
-        # Set minimum window size to keep buttons visible
         self.root.update_idletasks()
         min_width = self.root.winfo_width()
         min_height = self.root.winfo_height()
@@ -54,15 +53,13 @@ class GitPushGUI:
 
     def find_git_executable(self):
         """Find Git executable on Windows"""
-        # Common Git installation paths on Windows
         common_paths = [
             r"C:\Program Files\Git\bin\git.exe",
             r"C:\Program Files (x86)\Git\bin\git.exe",
             r"C:\Users\{}\AppData\Local\Programs\Git\bin\git.exe".format(os.getenv('USERNAME')),
-            "git"  # fallback to system PATH
+            "git"
         ]
         
-        # First try to find git using 'where' command
         try:
             result = subprocess.run(['where', 'git'], capture_output=True, text=True, shell=True)
             if result.returncode == 0:
@@ -71,17 +68,16 @@ class GitPushGUI:
         except:
             pass
         
-        # Try common installation paths
+
         for path in common_paths:
             if path == "git":
-                # Try using shutil to find git in PATH
                 git_exe = shutil.which("git")
                 if git_exe:
                     return git_exe
             elif os.path.exists(path):
                 return path
         
-        return "git"  # fallback
+        return "git"
     
     def setup_tags(self):
         self.output_text.tag_configure("error", foreground="#ff5555")
@@ -105,25 +101,21 @@ class GitPushGUI:
             btn.config(state=state)
 
     def setup_ui(self):
-        # Menu bar
         menubar = tk.Menu(self.root)
         helpmenu = tk.Menu(menubar, tearoff=0)
         helpmenu.add_command(label="About", command=self.show_about)
         menubar.add_cascade(label="Help", menu=helpmenu)
         self.root.config(menu=menubar)
-        # Main frame
         main_frame = tk.Frame(self.root, bg="#2b2b2b", padx=20, pady=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
         main_frame.grid_rowconfigure(6, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
         
-        # Title
         title_label = tk.Label(main_frame, text="🚀 Git Push Helper", 
                               font=("Arial", 18, "bold"), 
                               fg="#4CAF50", bg="#2b2b2b")
         title_label.pack(pady=(0, 20))
         
-        # Repository selection
         repo_frame = tk.Frame(main_frame, bg="#2b2b2b")
         repo_frame.pack(fill=tk.X, pady=(0, 15))
         
@@ -143,8 +135,6 @@ class GitPushGUI:
                               command=self.browse_repository,
                               bg="#555", fg="white", font=("Arial", 9))
         browse_btn.pack(side=tk.RIGHT)
-        
-        # Remote URL
         remote_frame = tk.Frame(main_frame, bg="#2b2b2b")
         remote_frame.pack(fill=tk.X, pady=(0, 15))
         
@@ -156,8 +146,7 @@ class GitPushGUI:
                                     font=("Arial", 10), bg="#404040", fg="white",
                                     insertbackground="white")
         self.remote_entry.pack(fill=tk.X, pady=(5, 0))
-        
-        # Branch selection
+
         branch_frame = tk.Frame(main_frame, bg="#2b2b2b")
         branch_frame.pack(fill=tk.X, pady=(0, 15))
         
@@ -169,13 +158,10 @@ class GitPushGUI:
                                font=("Arial", 10), bg="#404040", fg="white",
                                insertbackground="white")
         branch_entry.pack(fill=tk.X, pady=(5, 0))
-        
-        # Buttons frame
         button_frame = tk.Frame(main_frame, bg="#2b2b2b")
         button_frame.pack(fill=tk.X, pady=(20, 0))
         for i in range(12):
             button_frame.grid_columnconfigure(i, weight=1)
-        # Main git buttons
         status_btn = tk.Button(button_frame, text="📊 Status", command=self.check_git_status, bg="#2196F3", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
         status_btn.grid(row=0, column=0, sticky="ew", padx=2, pady=3)
         ToolTip(status_btn, "Check the current git status of the repository.")
@@ -194,7 +180,7 @@ class GitPushGUI:
         clear_btn = tk.Button(button_frame, text="🧹 Clear", command=self.clear_output, bg="#333", fg="white", font=("Arial", 10), padx=10, pady=10)
         clear_btn.grid(row=0, column=5, sticky="ew", padx=2, pady=3)
         ToolTip(clear_btn, "Clear the output terminal.")
-        # Extra git features
+
         pull_btn = tk.Button(button_frame, text="⬇️ Pull", command=self.pull_from_remote, bg="#388E3C", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
         pull_btn.grid(row=1, column=0, sticky="ew", padx=2, pady=3)
         ToolTip(pull_btn, "Pull latest changes from the remote repository.")
@@ -227,7 +213,7 @@ class GitPushGUI:
         ToolTip(remote_btn, "Show remote repositories.")
         self.all_buttons = [status_btn, init_btn, commit_btn, push_btn, history_btn, clear_btn, pull_btn, new_branch_btn, switch_branch_btn, del_branch_btn, stash_btn, pop_stash_btn, stash_list_btn, diff_btn, untracked_btn, remote_btn]
         
-        # Output text area
+
         output_frame = tk.Frame(main_frame, bg="#2b2b2b")
         output_frame.pack(fill=tk.BOTH, expand=True, pady=(20, 0))
         output_frame.grid_rowconfigure(1, weight=1)
@@ -236,7 +222,6 @@ class GitPushGUI:
         tk.Label(output_frame, text="Output:", 
                 font=("Arial", 10, "bold"), fg="white", bg="#2b2b2b").pack(anchor=tk.W)
         
-        # Text widget with scrollbar
         text_frame = tk.Frame(output_frame, bg="#2b2b2b")
         text_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         text_frame.grid_rowconfigure(0, weight=1)
@@ -250,11 +235,9 @@ class GitPushGUI:
         self.output_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Status bar
         status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W, bg="#222", fg="#fff", font=("Arial", 9))
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         
-        # Initial message
         git_status = "✅ Git found" if self.git_path != "git" else "⚠️ Git not found in common locations"
         self.log_output(f"Welcome to Git Push Helper! 🚀\n{git_status}: {self.git_path}\nSelect a repository to get started.\n" + "="*50 + "\n")
     
@@ -264,7 +247,6 @@ class GitPushGUI:
             self.path_var.set(folder)
             self.repo_path = folder
             self.log_output(f"Selected repository: {folder}\n")
-            # Auto-detect current branch
             try:
                 cmd = [self.git_path, 'rev-parse', '--abbrev-ref', 'HEAD']
                 result = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, shell=True)
@@ -272,7 +254,6 @@ class GitPushGUI:
                     self.branch_var.set(result.stdout.strip())
             except Exception as e:
                 self.log_output(f"❌ Error: {str(e)}\n", error=True)
-            # Try to get remote URL if it exists
             try:
                 cmd = [self.git_path, 'remote', 'get-url', 'origin']
                 result = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, shell=True)
@@ -311,7 +292,6 @@ class GitPushGUI:
     def init_git_repo(self):
         self.log_output("\n" + "="*30 + " INITIALIZE GIT " + "="*30 + "\n")
         if self.run_git_command(['git', 'init'], "Git repository initialized! 🎉"):
-            # Also create a basic .gitignore
             try:
                 gitignore_path = os.path.join(self.repo_path, '.gitignore')
                 with open(gitignore_path, 'w') as f:
@@ -333,9 +313,7 @@ class GitPushGUI:
         
         self.log_output("\n" + "="*30 + " ADD & COMMIT " + "="*30 + "\n")
         
-        # Add all files
         if self.run_git_command(['git', 'add', '.'], "Files added to staging"):
-            # Commit
             self.run_git_command(['git', 'commit', '-m', commit_msg], 
                                f"Committed with message: '{commit_msg}'")
     
@@ -353,7 +331,6 @@ class GitPushGUI:
         
         def push_async():
             self.log_output("\n" + "="*30 + " PUSHING TO GITHUB " + "="*30 + "\n")
-            # Handle existing remote gracefully
             try:
                 cmd = [self.git_path, 'remote', 'get-url', 'origin']
                 result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, shell=True)
@@ -366,7 +343,6 @@ class GitPushGUI:
             self.run_git_command(['git', 'push', '-u', 'origin', branch],
                                 f"Successfully pushed to {branch} branch! 🎉")
         
-        # Show progress/spinner
         progress = tk.Toplevel(self.root)
         progress.title("Pushing...")
         tk.Label(progress, text="Pushing to GitHub, please wait...", font=("Arial", 12)).pack(padx=20, pady=20)
@@ -497,7 +473,6 @@ class GitPushGUI:
         self.log_output(f"\n{'='*30} REMOTE REPOSITORIES {'='*30}\n")
         self.run_git_command(['git', 'remote', '-v'], "Remote repositories:")
 
-# Import for commit message dialog
 import tkinter.simpledialog
 
 def main():
