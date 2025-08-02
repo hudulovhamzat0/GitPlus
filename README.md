@@ -77,7 +77,7 @@
 
 ---
 
-## 🚦 Usage
+## Usage
 
 - Select your local repository folder.
 - Enter your remote GitHub URL and branch name.
