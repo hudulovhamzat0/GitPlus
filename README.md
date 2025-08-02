@@ -1,4 +1,4 @@
-<h1 align="center">🚀 <span style="color:#4CAF50;">Git Push Helper</span> 🚀</h1>
+<h1 align="center"> <span style="color:#4CAF50;">Git Push Helper</span> </h1>
 
 <p align="center">
   <b>A simple, user-friendly GUI to help you manage git repositories and push code to GitHub.</b><br>
