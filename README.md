@@ -72,7 +72,7 @@
 
 ## 📸 Screenshots
 
-<img src="photo.png" alt="Main UI" width="700"/>
+<img src="ss.gif" alt="Main UI" width="700"/>
 
 
 ---
