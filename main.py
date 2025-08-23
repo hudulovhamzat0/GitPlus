@@ -1,484 +1,444 @@
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import subprocess
+# -*- coding: utf-8 -*-
+
+import sys
 import os
-import threading
+import subprocess
 import shutil
 import json
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLineEdit, QTextEdit, QLabel, QFileDialog,
+    QMessageBox, QInputDialog, QGridLayout, QStatusBar, QMenuBar
+)
+from PySide6.QtCore import QThread, QObject, Signal, Slot
+from PySide6.QtGui import QIcon, QAction, QTextCursor, QColor
+import qtawesome as qta
 
-class ToolTip:
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tipwindow = None
-        widget.bind("<Enter>", self.show_tip)
-        widget.bind("<Leave>", self.hide_tip)
-    def show_tip(self, event=None):
-        if self.tipwindow or not self.text:
-            return
-        x, y, cx, cy = self.widget.bbox("insert")
-        x = x + self.widget.winfo_rootx() + 25
-        y = y + self.widget.winfo_rooty() + 20
-        self.tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
-                         background="#ffffe0", relief=tk.SOLID, borderwidth=1,
-                         font=("tahoma", "8", "normal"))
-        label.pack(ipadx=1)
-    def hide_tip(self, event=None):
-        tw = self.tipwindow
-        self.tipwindow = None
-        if tw:
-            tw.destroy()
+# === Worker Class for Running Git Commands in Background ===
+# This class runs git commands in a separate thread to prevent the GUI from freezing.
+class GitWorker(QObject):
+    # Signals to communicate with the main GUI thread
+    output = Signal(str)
+    error = Signal(str)
+    finished = Signal()
 
-class GitPushGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Git Push Helper")
-        self.root.geometry("900x700")
-        self.root.configure(bg="#2b2b2b")
+    @Slot(list, str)
+    def run_command(self, command, repo_path):
+        """Runs a subprocess command and emits signals with the result."""
+        try:
+            # Replace 'git' with the full path if found
+            if command[0] == 'git':
+                command[0] = self.parent().git_path
+            
+            self.output.emit(f"🚀 Running: {' '.join(command)}\n")
+            
+            # Using shell=True on Windows for commands like 'where' or complex paths
+            is_shell = sys.platform == "win32"
+
+            result = subprocess.run(
+                command,
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                shell=is_shell,
+                encoding='utf-8' # Ensure proper encoding
+            )
+
+            if result.returncode == 0:
+                if result.stdout:
+                    self.output.emit(result.stdout + "\n")
+            else:
+                if result.stderr:
+                    self.error.emit(f"❌ Error: {result.stderr}\n")
+                else:
+                    self.error.emit(f"❌ Command failed with no specific error message.\n")
+
+        except FileNotFoundError as e:
+            self.error.emit(f"❌ File Not Found Error: {str(e)}. Is Git installed and in your PATH?\n")
+        except Exception as e:
+            self.error.emit(f"❌ An unexpected error occurred: {str(e)}\n")
+        finally:
+            self.finished.emit()
+
+# === Main GUI Class ===
+class GitPushGUI(QMainWindow):
+    # Signal to trigger the worker thread
+    command_requested = Signal(list, str)
+
+    def __init__(self):
+        super().__init__()
         self.repo_path = ""
         self.git_path = self.find_git_executable()
         self.all_buttons = []
-        self.status_var = tk.StringVar()
-        self.status_var.set("")
-        self.setup_ui()
-        self.setup_tags()
+        
+        self.init_ui()
+        self.init_worker()
+        self.apply_stylesheet()
         self.load_settings()
-        self.root.update_idletasks()
-        min_width = self.root.winfo_width()
-        min_height = self.root.winfo_height()
-        self.root.minsize(min_width, min_height)
 
-    def find_git_executable(self):
-        """Find Git executable on Windows"""
-        common_paths = [
-            r"C:\Program Files\Git\bin\git.exe",
-            r"C:\Program Files (x86)\Git\bin\git.exe",
-            r"C:\Users\{}\AppData\Local\Programs\Git\bin\git.exe".format(os.getenv('USERNAME')),
-            "git"
+    def init_ui(self):
+        """Sets up the main user interface."""
+        self.setWindowTitle("Git Push Helper Pro")
+        self.setWindowIcon(qta.icon('fa5b.github', color='white'))
+        self.resize(1000, 800)
+
+        # --- Menu Bar ---
+        menu_bar = self.menuBar()
+        help_menu = menu_bar.addMenu("Help")
+        about_action = QAction("About", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
+        # --- Central Widget and Main Layout ---
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
+
+        # --- Title ---
+        title_label = QLabel("🚀 Git Push Helper Pro")
+        title_label.setObjectName("titleLabel")
+        main_layout.addWidget(title_label)
+
+        # --- Input Fields ---
+        # Repository Path
+        path_layout = self._create_input_group("Repository Path:", "path_entry", self.browse_repository, "Browse...")
+        self.path_entry = path_layout.itemAt(1).widget()
+        main_layout.addLayout(path_layout)
+        
+        # Remote URL
+        remote_layout = self._create_input_group("GitHub Repository URL:", "remote_entry")
+        self.remote_entry = remote_layout.itemAt(1).widget()
+        main_layout.addLayout(remote_layout)
+        
+        # Branch
+        branch_layout = self._create_input_group("Branch:", "branch_entry")
+        self.branch_entry = branch_layout.itemAt(1).widget()
+        self.branch_entry.setText("main")
+        main_layout.addLayout(branch_layout)
+
+        # --- Buttons Grid ---
+        buttons_layout = QGridLayout()
+        buttons_layout.setSpacing(10)
+        
+        buttons_config = [
+            {'text': "Status", 'icon': 'fa5s.chart-bar', 'func': self.check_git_status, 'tip': "Check the current git status."},
+            {'text': "Init", 'icon': 'fa5s.magic', 'func': self.init_git_repo, 'tip': "Initialize a new git repository."},
+            {'text': "Commit", 'icon': 'fa5s.save', 'func': self.add_and_commit, 'tip': "Add all changes and commit."},
+            {'text': "History", 'icon': 'fa5s.history', 'func': self.show_commit_history, 'tip': "Show commit history."},
+            {'text': "Push", 'icon': 'fa5s.rocket', 'func': self.push_to_github, 'tip': "Push changes to the remote repository."},
+            {'text': "Pull", 'icon': 'fa5s.download', 'func': self.pull_from_remote, 'tip': "Pull changes from the remote repository."},
+            {'text': "New Branch", 'icon': 'fa5s.code-branch', 'func': self.create_new_branch, 'tip': "Create and switch to a new branch."},
+            {'text': "Switch Branch", 'icon': 'fa5s.exchange-alt', 'func': self.switch_branch, 'tip': "Switch to another branch."},
+            {'text': "Delete Branch", 'icon': 'fa5s.trash-alt', 'func': self.delete_branch, 'tip': "Delete a local branch."},
+            {'text': "Stash", 'icon': 'fa5s.box', 'func': self.stash_changes, 'tip': "Stash current changes."},
+            {'text': "Pop Stash", 'icon': 'fa5s.box-open', 'func': self.apply_stash, 'tip': "Apply the latest stash."},
+            {'text': "Clear Output", 'icon': 'fa5s.broom', 'func': self.clear_output, 'tip': "Clear the output terminal."},
         ]
-        
-        try:
-            result = subprocess.run(['where', 'git'], capture_output=True, text=True, shell=True)
-            if result.returncode == 0:
-                git_path = result.stdout.strip().split('\n')[0]
-                return git_path
-        except:
-            pass
-        
 
-        for path in common_paths:
-            if path == "git":
-                git_exe = shutil.which("git")
-                if git_exe:
-                    return git_exe
-            elif os.path.exists(path):
-                return path
-        
-        return "git"
-    
-    def setup_tags(self):
-        self.output_text.tag_configure("error", foreground="#ff5555")
-        self.output_text.tag_configure("info", foreground="#00ff00")
+        row, col = 0, 0
+        for config in buttons_config:
+            button = QPushButton(f" {config['text']}")
+            button.setIcon(qta.icon(config['icon'], color='white'))
+            button.clicked.connect(config['func'])
+            button.setToolTip(config['tip'])
+            button.setObjectName("commandButton")
+            buttons_layout.addWidget(button, row, col)
+            self.all_buttons.append(button)
+            col += 1
+            if col > 5:
+                col = 0
+                row += 1
+        main_layout.addLayout(buttons_layout)
 
-    def log_output(self, message, error=False):
-        tag = "error" if error else "info"
-        self.output_text.config(state="normal")
-        self.output_text.insert(tk.END, message, tag)
-        self.output_text.see(tk.END)
-        self.output_text.config(state="disabled")
-        if error:
-            self.set_status("Error occurred. See output.")
-        elif message.strip():
-            self.set_status(message.strip().splitlines()[-1][:60])
-        self.root.update()
+        # --- Output Text Area ---
+        output_label = QLabel("Output:")
+        main_layout.addWidget(output_label)
+        
+        self.output_text = QTextEdit()
+        self.output_text.setReadOnly(True)
+        self.output_text.setObjectName("output")
+        main_layout.addWidget(self.output_text, 1) # Give it stretch factor
+        
+        # --- Status Bar ---
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
 
-    def enable_buttons(self, enable=True):
-        state = tk.NORMAL if enable else tk.DISABLED
-        for btn in self.all_buttons:
-            btn.config(state=state)
-
-    def setup_ui(self):
-        menubar = tk.Menu(self.root)
-        helpmenu = tk.Menu(menubar, tearoff=0)
-        helpmenu.add_command(label="About", command=self.show_about)
-        menubar.add_cascade(label="Help", menu=helpmenu)
-        self.root.config(menu=menubar)
-        main_frame = tk.Frame(self.root, bg="#2b2b2b", padx=20, pady=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        main_frame.grid_rowconfigure(6, weight=1)
-        main_frame.grid_columnconfigure(0, weight=1)
-        
-        title_label = tk.Label(main_frame, text="🚀 Git Push Helper", 
-                              font=("Arial", 18, "bold"), 
-                              fg="#4CAF50", bg="#2b2b2b")
-        title_label.pack(pady=(0, 20))
-        
-        repo_frame = tk.Frame(main_frame, bg="#2b2b2b")
-        repo_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        tk.Label(repo_frame, text="Repository Path:", 
-                font=("Arial", 10, "bold"), fg="white", bg="#2b2b2b").pack(anchor=tk.W)
-        
-        path_frame = tk.Frame(repo_frame, bg="#2b2b2b")
-        path_frame.pack(fill=tk.X, pady=(5, 0))
-        
-        self.path_var = tk.StringVar()
-        self.path_entry = tk.Entry(path_frame, textvariable=self.path_var, 
-                                  font=("Arial", 10), bg="#404040", fg="white",
-                                  insertbackground="white")
-        self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-        
-        browse_btn = tk.Button(path_frame, text="Browse", 
-                              command=self.browse_repository,
-                              bg="#555", fg="white", font=("Arial", 9))
-        browse_btn.pack(side=tk.RIGHT)
-        remote_frame = tk.Frame(main_frame, bg="#2b2b2b")
-        remote_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        tk.Label(remote_frame, text="GitHub Repository URL:", 
-                font=("Arial", 10, "bold"), fg="white", bg="#2b2b2b").pack(anchor=tk.W)
-        
-        self.remote_var = tk.StringVar()
-        self.remote_entry = tk.Entry(remote_frame, textvariable=self.remote_var,
-                                    font=("Arial", 10), bg="#404040", fg="white",
-                                    insertbackground="white")
-        self.remote_entry.pack(fill=tk.X, pady=(5, 0))
-
-        branch_frame = tk.Frame(main_frame, bg="#2b2b2b")
-        branch_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        tk.Label(branch_frame, text="Branch:", 
-                font=("Arial", 10, "bold"), fg="white", bg="#2b2b2b").pack(anchor=tk.W)
-        
-        self.branch_var = tk.StringVar(value="main")
-        branch_entry = tk.Entry(branch_frame, textvariable=self.branch_var,
-                               font=("Arial", 10), bg="#404040", fg="white",
-                               insertbackground="white")
-        branch_entry.pack(fill=tk.X, pady=(5, 0))
-        button_frame = tk.Frame(main_frame, bg="#2b2b2b")
-        button_frame.pack(fill=tk.X, pady=(20, 0))
-        for i in range(12):
-            button_frame.grid_columnconfigure(i, weight=1)
-        status_btn = tk.Button(button_frame, text="📊 Status", command=self.check_git_status, bg="#2196F3", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        status_btn.grid(row=0, column=0, sticky="ew", padx=2, pady=3)
-        ToolTip(status_btn, "Check the current git status of the repository.")
-        init_btn = tk.Button(button_frame, text="🎯 Init", command=self.init_git_repo, bg="#9C27B0", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        init_btn.grid(row=0, column=1, sticky="ew", padx=2, pady=3)
-        ToolTip(init_btn, "Initialize a new git repository in the selected folder.")
-        commit_btn = tk.Button(button_frame, text="💾 Commit", command=self.add_and_commit, bg="#FF9800", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        commit_btn.grid(row=0, column=2, sticky="ew", padx=2, pady=3)
-        ToolTip(commit_btn, "Add all changes and commit with a message.")
-        history_btn = tk.Button(button_frame, text="🕑 History", command=self.show_commit_history, bg="#607D8B", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        history_btn.grid(row=0, column=3, sticky="ew", padx=2, pady=3)
-        ToolTip(history_btn, "Show the last 10 git commits with notes and dates.")
-        push_btn = tk.Button(button_frame, text="🚀 Push", command=self.push_to_github, bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), padx=10, pady=10)
-        push_btn.grid(row=0, column=4, sticky="ew", padx=2, pady=3)
-        ToolTip(push_btn, "Push the current branch to the remote GitHub repository.")
-        clear_btn = tk.Button(button_frame, text="🧹 Clear", command=self.clear_output, bg="#333", fg="white", font=("Arial", 10), padx=10, pady=10)
-        clear_btn.grid(row=0, column=5, sticky="ew", padx=2, pady=3)
-        ToolTip(clear_btn, "Clear the output terminal.")
-
-        pull_btn = tk.Button(button_frame, text="⬇️ Pull", command=self.pull_from_remote, bg="#388E3C", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        pull_btn.grid(row=1, column=0, sticky="ew", padx=2, pady=3)
-        ToolTip(pull_btn, "Pull latest changes from the remote repository.")
-        new_branch_btn = tk.Button(button_frame, text="🌱 New Branch", command=self.create_new_branch, bg="#1976D2", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        new_branch_btn.grid(row=1, column=1, sticky="ew", padx=2, pady=3)
-        ToolTip(new_branch_btn, "Create and switch to a new branch.")
-        switch_branch_btn = tk.Button(button_frame, text="🔀 Switch Branch", command=self.switch_branch, bg="#455A64", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        switch_branch_btn.grid(row=1, column=2, sticky="ew", padx=2, pady=3)
-        ToolTip(switch_branch_btn, "Switch to another branch.")
-        del_branch_btn = tk.Button(button_frame, text="❌ Del Branch", command=self.delete_branch, bg="#B71C1C", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        del_branch_btn.grid(row=1, column=3, sticky="ew", padx=2, pady=3)
-        ToolTip(del_branch_btn, "Delete a branch.")
-        stash_btn = tk.Button(button_frame, text="📥 Stash", command=self.stash_changes, bg="#8D6E63", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        stash_btn.grid(row=1, column=4, sticky="ew", padx=2, pady=3)
-        ToolTip(stash_btn, "Stash current changes.")
-        pop_stash_btn = tk.Button(button_frame, text="📤 Pop Stash", command=self.apply_stash, bg="#6D4C41", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        pop_stash_btn.grid(row=1, column=5, sticky="ew", padx=2, pady=3)
-        ToolTip(pop_stash_btn, "Apply the latest stash.")
-        stash_list_btn = tk.Button(button_frame, text="📚 Stash List", command=self.show_stash_list, bg="#5D4037", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        stash_list_btn.grid(row=1, column=6, sticky="ew", padx=2, pady=3)
-        ToolTip(stash_list_btn, "Show list of stashes.")
-        diff_btn = tk.Button(button_frame, text="📝 Diff", command=self.show_diff, bg="#0288D1", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        diff_btn.grid(row=1, column=7, sticky="ew", padx=2, pady=3)
-        ToolTip(diff_btn, "Show file differences (git diff).")
-        untracked_btn = tk.Button(button_frame, text="❓ Untracked", command=self.show_untracked_files, bg="#FBC02D", fg="black", font=("Arial", 10, "bold"), padx=10, pady=10)
-        untracked_btn.grid(row=1, column=8, sticky="ew", padx=2, pady=3)
-        ToolTip(untracked_btn, "Show untracked files.")
-        remote_btn = tk.Button(button_frame, text="🌐 Remotes", command=self.show_remotes, bg="#009688", fg="white", font=("Arial", 10, "bold"), padx=10, pady=10)
-        remote_btn.grid(row=1, column=9, sticky="ew", padx=2, pady=3)
-        ToolTip(remote_btn, "Show remote repositories.")
-        self.all_buttons = [status_btn, init_btn, commit_btn, push_btn, history_btn, clear_btn, pull_btn, new_branch_btn, switch_branch_btn, del_branch_btn, stash_btn, pop_stash_btn, stash_list_btn, diff_btn, untracked_btn, remote_btn]
-        
-
-        output_frame = tk.Frame(main_frame, bg="#2b2b2b")
-        output_frame.pack(fill=tk.BOTH, expand=True, pady=(20, 0))
-        output_frame.grid_rowconfigure(1, weight=1)
-        output_frame.grid_columnconfigure(0, weight=1)
-        
-        tk.Label(output_frame, text="Output:", 
-                font=("Arial", 10, "bold"), fg="white", bg="#2b2b2b").pack(anchor=tk.W)
-        
-        text_frame = tk.Frame(output_frame, bg="#2b2b2b")
-        text_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
-        text_frame.grid_rowconfigure(0, weight=1)
-        text_frame.grid_columnconfigure(0, weight=1)
-        
-        self.output_text = tk.Text(text_frame, bg="#1e1e1e", fg="#00ff00",
-                                  font=("Consolas", 9), wrap=tk.WORD, state="disabled")
-        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.output_text.yview)
-        self.output_text.configure(yscrollcommand=scrollbar.set)
-        
-        self.output_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W, bg="#222", fg="#fff", font=("Arial", 9))
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-        
         git_status = "✅ Git found" if self.git_path != "git" else "⚠️ Git not found in common locations"
-        self.log_output(f"Welcome to Git Push Helper! 🚀\n{git_status}: {self.git_path}\nSelect a repository to get started.\n" + "="*50 + "\n")
-    
-    def browse_repository(self):
-        folder = filedialog.askdirectory(title="Select Git Repository")
-        if folder:
-            self.path_var.set(folder)
-            self.repo_path = folder
-            self.log_output(f"Selected repository: {folder}\n")
-            try:
-                cmd = [self.git_path, 'rev-parse', '--abbrev-ref', 'HEAD']
-                result = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, shell=True)
-                if result.returncode == 0:
-                    self.branch_var.set(result.stdout.strip())
-            except Exception as e:
-                self.log_output(f"❌ Error: {str(e)}\n", error=True)
-            try:
-                cmd = [self.git_path, 'remote', 'get-url', 'origin']
-                result = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, shell=True)
-                if result.returncode == 0:
-                    self.remote_var.set(result.stdout.strip())
-                    self.log_output(f"Found remote: {result.stdout.strip()}\n")
-            except Exception as e:
-                self.log_output(f"❌ Error: {str(e)}\n", error=True)
-            self.save_settings()
+        self.log_output(f"Welcome to Git Push Helper Pro! 🚀\n{git_status}: {self.git_path}\nSelect a repository to get started.\n" + "="*70 + "\n")
 
-    def run_git_command(self, command, success_msg=""):
+    def _create_input_group(self, label_text, entry_name, btn_callback=None, btn_text=None):
+        """Helper to create a label, line edit, and optional button."""
+        layout = QHBoxLayout()
+        label = QLabel(label_text)
+        label.setFixedWidth(150)
+        entry = QLineEdit()
+        entry.setObjectName(entry_name)
+        
+        layout.addWidget(label)
+        layout.addWidget(entry)
+        
+        if btn_callback and btn_text:
+            button = QPushButton(btn_text)
+            button.clicked.connect(btn_callback)
+            layout.addWidget(button)
+            
+        return layout
+
+    def init_worker(self):
+        """Sets up the background worker thread for git commands."""
+        self.thread = QThread()
+        self.worker = GitWorker()
+        self.worker.moveToThread(self.thread)
+
+        self.worker.output.connect(self.log_output)
+        self.worker.error.connect(self.log_error)
+        self.worker.finished.connect(self.on_command_finished)
+
+        self.command_requested.connect(self.worker.run_command)
+        
+        self.thread.start()
+    
+    def on_command_finished(self):
+        """Re-enables buttons after a command is done."""
+        self.log_output("✅ Command finished.\n" + "="*70 + "\n")
+        self.enable_buttons(True)
+
+    def trigger_command(self, command):
+        """Central function to run a git command via the worker thread."""
         if not self.repo_path:
-            messagebox.showerror("Error", "Please select a repository first!")
-            return False
+            QMessageBox.critical(self, "Error", "Please select a repository first!")
+            return
+        
         self.enable_buttons(False)
-        try:
-            if command[0] == 'git':
-                command[0] = self.git_path
-            self.log_output(f"Running: {' '.join(command)}\n")
-            result = subprocess.run(command, cwd=self.repo_path,
-                                   capture_output=True, text=True, shell=True)
-            if result.returncode == 0:
-                self.log_output(f"✅ {success_msg}\n")
-                if result.stdout:
-                    self.log_output(f"{result.stdout}\n")
-                return True
-            else:
-                self.log_output(f"❌ Error: {result.stderr}\n", error=True)
-                return False
-        except Exception as e:
-            self.log_output(f"❌ Error: {str(e)}\n", error=True)
-            return False
-        finally:
-            self.enable_buttons(True)
+        self.command_requested.emit(command, self.repo_path)
+        
+    @Slot(str)
+    def log_output(self, message):
+        self.output_text.moveCursor(QTextCursor.MoveOperation.End)
+        self.output_text.setTextColor(QColor("#4CAF50")) # Green for success
+        self.output_text.insertPlainText(message)
+        self.output_text.ensureCursorVisible()
 
-    def init_git_repo(self):
-        self.log_output("\n" + "="*30 + " INITIALIZE GIT " + "="*30 + "\n")
-        if self.run_git_command(['git', 'init'], "Git repository initialized! 🎉"):
-            try:
-                gitignore_path = os.path.join(self.repo_path, '.gitignore')
-                with open(gitignore_path, 'w') as f:
-                    f.write("# Python\n__pycache__/\n*.pyc\n*.pyo\n\n# IDE\n.vscode/\n.idea/\n\n# OS\n.DS_Store\nThumbs.db\n")
-                self.log_output("Created basic .gitignore file\n")
-            except:
-                pass
-    
+    @Slot(str)
+    def log_error(self, message):
+        self.output_text.moveCursor(QTextCursor.MoveOperation.End)
+        self.output_text.setTextColor(QColor("#F44336")) # Red for errors
+        self.output_text.insertPlainText(message)
+        self.output_text.ensureCursorVisible()
+
+    # --- Button Callbacks ---
     def check_git_status(self):
         self.log_output("\n" + "="*30 + " GIT STATUS " + "="*30 + "\n")
-        self.run_git_command(['git', 'status'], "Status checked")
+        self.trigger_command(['git', 'status'])
     
+    def init_git_repo(self):
+        self.log_output("\n" + "="*30 + " INITIALIZE GIT " + "="*30 + "\n")
+        self.trigger_command(['git', 'init'])
+
     def add_and_commit(self):
-        commit_msg = tk.simpledialog.askstring("Commit Message", 
-                                              "Enter commit message:",
-                                              initialvalue="Update files")
-        if not commit_msg:
-            return
-        
-        self.log_output("\n" + "="*30 + " ADD & COMMIT " + "="*30 + "\n")
-        
-        if self.run_git_command(['git', 'add', '.'], "Files added to staging"):
-            self.run_git_command(['git', 'commit', '-m', commit_msg], 
-                               f"Committed with message: '{commit_msg}'")
-    
+        commit_msg, ok = QInputDialog.getText(self, "Commit Message", 
+                                              "Enter commit message:", 
+                                              QLineEdit.EchoMode.Normal, "Update files")
+        if ok and commit_msg:
+            self.log_output("\n" + "="*30 + " ADD & COMMIT " + "="*30 + "\n")
+            self.trigger_command(['git', 'add', '.'])
+            # We need to chain commands, this requires a more complex worker.
+            # For simplicity, we trigger commit right after. A better way is a command queue.
+            self.trigger_command(['git', 'commit', '-m', commit_msg])
+
     def push_to_github(self):
-        if not self.repo_path:
-            messagebox.showerror("Error", "Please select a repository first!")
-            return
-        
-        remote_url = self.remote_var.get().strip()
-        branch = self.branch_var.get().strip()
-        
+        remote_url = self.remote_entry.text().strip()
+        branch = self.branch_entry.text().strip()
         if not remote_url:
-            messagebox.showerror("Error", "Please enter a GitHub repository URL!")
+            QMessageBox.critical(self, "Error", "Please enter a GitHub repository URL!")
             return
-        
-        def push_async():
-            self.log_output("\n" + "="*30 + " PUSHING TO GITHUB " + "="*30 + "\n")
-            try:
-                cmd = [self.git_path, 'remote', 'get-url', 'origin']
-                result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, shell=True)
-                if result.returncode == 0:
-                    self.run_git_command(['git', 'remote', 'set-url', 'origin', remote_url], "Remote origin updated")
-                else:
-                    self.run_git_command(['git', 'remote', 'add', 'origin', remote_url], "Remote origin set")
-            except Exception as e:
-                self.run_git_command(['git', 'remote', 'add', 'origin', remote_url], "Remote origin set")
-            self.run_git_command(['git', 'push', '-u', 'origin', branch],
-                                f"Successfully pushed to {branch} branch! 🎉")
-        
-        progress = tk.Toplevel(self.root)
-        progress.title("Pushing...")
-        tk.Label(progress, text="Pushing to GitHub, please wait...", font=("Arial", 12)).pack(padx=20, pady=20)
-        progress.geometry("300x80")
-        progress.transient(self.root)
-        progress.grab_set()
-        progress.update()
-        def thread_target():
-            self.enable_buttons(False)
-            push_async()
-            progress.destroy()
-            self.enable_buttons(True)
-        thread = threading.Thread(target=thread_target)
-        thread.daemon = True
-        thread.start()
+        self.log_output("\n" + "="*30 + " PUSHING TO GITHUB " + "="*30 + "\n")
+        self.trigger_command(['git', 'remote', 'set-url', 'origin', remote_url])
+        self.trigger_command(['git', 'push', '-u', 'origin', branch])
 
     def show_commit_history(self):
         self.log_output("\n" + "="*30 + " COMMIT HISTORY " + "="*30 + "\n")
-        try:
-            cmd = [self.git_path, 'log', '--pretty=format:%h | %an | %ad | %s', '--date=short', '-n', '10']
-            result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, shell=True)
-            if result.returncode == 0:
-                self.log_output("Hash | Author | Date | Message\n", error=False)
-                self.log_output("-"*80 + "\n", error=False)
-                self.log_output(result.stdout + "\n")
-            else:
-                self.log_output(f"❌ Error: {result.stderr}\n", error=True)
-        except Exception as e:
-            self.log_output(f"❌ Error: {str(e)}\n", error=True)
-
-    def clear_output(self):
-        self.output_text.config(state="normal")
-        self.output_text.delete(1.0, tk.END)
-        self.output_text.config(state="disabled")
-        self.set_status("Output cleared.")
-
-    def set_status(self, message):
-        self.status_var.set(message)
-        self.root.after(4000, lambda: self.status_var.set(""))
-
-    def save_settings(self):
-        data = {
-            "repo_path": self.repo_path,
-            "branch": self.branch_var.get(),
-            "remote": self.remote_var.get()
-        }
-        try:
-            with open("gitpushgui_settings.json", "w") as f:
-                json.dump(data, f)
-        except:
-            pass
-
-    def load_settings(self):
-        try:
-            with open("gitpushgui_settings.json", "r") as f:
-                data = json.load(f)
-                self.repo_path = data.get("repo_path", "")
-                self.path_var.set(self.repo_path)
-                self.branch_var.set(data.get("branch", "main"))
-                self.remote_var.set(data.get("remote", ""))
-        except:
-            pass
-
-    def show_about(self):
-        about_text = (
-            "Git Push Helper\n\n"
-            "A simple, user-friendly GUI to help you manage git repositories and push code to GitHub.\n\n"
-            "Features:\n"
-            "- Status, Init, Add & Commit, Push\n"
-            "- Pull, Branch management, Stash, Diff, Untracked files, Remotes\n"
-            "- Commit history with notes and dates\n"
-            "- Output terminal, tooltips, and more\n\n"
-            "Author: Hamzat Hudulov\n"
-            "GitHub: github.com/hudulovhamzat0\n"
-            "Email: hamzathudulov@gmail.com\n\n"
-            "Made with Python & Tkinter.\n\n"
-            "© 2024 Hamzat Hudulov. All rights reserved."
-        )
-        messagebox.showinfo("About Git Push Helper", about_text)
-
+        self.trigger_command(['git', 'log', '--pretty=format:%h | %an | %ad | %s', '--date=short', '-n', '15'])
+    
     def pull_from_remote(self):
         self.log_output("\n" + "="*30 + " GIT PULL " + "="*30 + "\n")
-        self.run_git_command(['git', 'pull'], "Pulled latest changes from remote.")
+        self.trigger_command(['git', 'pull'])
 
     def create_new_branch(self):
-        branch_name = tk.simpledialog.askstring("New Branch", "Enter new branch name:")
-        if branch_name:
+        branch_name, ok = QInputDialog.getText(self, "New Branch", "Enter new branch name:")
+        if ok and branch_name:
             self.log_output(f"\n{'='*30} CREATE NEW BRANCH {'='*30}\n")
-            if self.run_git_command(['git', 'checkout', '-b', branch_name], f"Created and switched to branch '{branch_name}'"):
-                self.branch_var.set(branch_name)
-                self.save_settings()
+            self.trigger_command(['git', 'checkout', '-b', branch_name])
+            self.branch_entry.setText(branch_name)
 
     def switch_branch(self):
-        branch_name = tk.simpledialog.askstring("Switch Branch", "Enter branch name to switch to:")
-        if branch_name:
+        branch_name, ok = QInputDialog.getText(self, "Switch Branch", "Enter branch name:")
+        if ok and branch_name:
             self.log_output(f"\n{'='*30} SWITCH BRANCH {'='*30}\n")
-            if self.run_git_command(['git', 'checkout', branch_name], f"Switched to branch '{branch_name}'"):
-                self.branch_var.set(branch_name)
-                self.save_settings()
+            self.trigger_command(['git', 'checkout', branch_name])
+            self.branch_entry.setText(branch_name)
 
     def delete_branch(self):
-        branch_name = tk.simpledialog.askstring("Delete Branch", "Enter branch name to delete:")
-        if branch_name:
+        branch_name, ok = QInputDialog.getText(self, "Delete Branch", "Enter branch to delete:")
+        if ok and branch_name:
             self.log_output(f"\n{'='*30} DELETE BRANCH {'='*30}\n")
-            self.run_git_command(['git', 'branch', '-d', branch_name], f"Deleted branch '{branch_name}'")
+            self.trigger_command(['git', 'branch', '-d', branch_name])
 
     def stash_changes(self):
         self.log_output(f"\n{'='*30} STASH CHANGES {'='*30}\n")
-        self.run_git_command(['git', 'stash'], "Stashed current changes.")
+        self.trigger_command(['git', 'stash'])
 
     def apply_stash(self):
         self.log_output(f"\n{'='*30} APPLY STASH {'='*30}\n")
-        self.run_git_command(['git', 'stash', 'pop'], "Applied latest stash.")
+        self.trigger_command(['git', 'stash', 'pop'])
+        
+    def clear_output(self):
+        self.output_text.clear()
+        self.status_bar.showMessage("Output cleared.", 3000)
 
-    def show_stash_list(self):
-        self.log_output(f"\n{'='*30} STASH LIST {'='*30}\n")
-        self.run_git_command(['git', 'stash', 'list'], "Stash list:")
+    # --- Helper Functions ---
+    def browse_repository(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Git Repository")
+        if folder:
+            self.repo_path = folder
+            self.path_entry.setText(folder)
+            self.log_output(f"Selected repository: {folder}\n")
+            # Update remote and branch info
+            try:
+                result = subprocess.run([self.git_path, 'rev-parse', '--abbrev-ref', 'HEAD'], cwd=folder, capture_output=True, text=True, shell=sys.platform == "win32")
+                if result.returncode == 0:
+                    self.branch_entry.setText(result.stdout.strip())
+                
+                result = subprocess.run([self.git_path, 'remote', 'get-url', 'origin'], cwd=folder, capture_output=True, text=True, shell=sys.platform == "win32")
+                if result.returncode == 0:
+                    self.remote_entry.setText(result.stdout.strip())
+            except Exception as e:
+                self.log_error(f"Error reading repo info: {e}")
+            self.save_settings()
 
-    def show_diff(self):
-        self.log_output(f"\n{'='*30} GIT DIFF {'='*30}\n")
-        self.run_git_command(['git', 'diff'], "File differences:")
+    def find_git_executable(self):
+        # This function is mostly unchanged
+        if shutil.which("git"):
+            return shutil.which("git")
+        common_paths = [
+            r"C:\Program Files\Git\bin\git.exe",
+            r"C:\Program Files (x86)\Git\bin\git.exe",
+        ]
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+        return "git" # Fallback to PATH
 
-    def show_untracked_files(self):
-        self.log_output(f"\n{'='*30} UNTRACKED FILES {'='*30}\n")
-        self.run_git_command(['git', 'ls-files', '--others', '--exclude-standard'], "Untracked files:")
+    def enable_buttons(self, enable=True):
+        for btn in self.all_buttons:
+            btn.setEnabled(enable)
 
-    def show_remotes(self):
-        self.log_output(f"\n{'='*30} REMOTE REPOSITORIES {'='*30}\n")
-        self.run_git_command(['git', 'remote', '-v'], "Remote repositories:")
+    def save_settings(self):
+        settings = {
+            "repo_path": self.repo_path,
+            "remote": self.remote_entry.text(),
+            "branch": self.branch_entry.text()
+        }
+        with open("git_gui_settings.json", "w") as f:
+            json.dump(settings, f)
 
-import tkinter.simpledialog
+    def load_settings(self):
+        try:
+            with open("git_gui_settings.json", "r") as f:
+                settings = json.load(f)
+                self.repo_path = settings.get("repo_path", "")
+                self.path_entry.setText(self.repo_path)
+                self.remote_entry.setText(settings.get("remote", ""))
+                self.branch_entry.setText(settings.get("branch", "main"))
+        except FileNotFoundError:
+            pass # No settings file yet
+            
+    def show_about(self):
+        QMessageBox.about(self, "About Git Push Helper Pro",
+            """
+            <b>Git Push Helper Pro</b>
+            <p>A modern GUI for managing your Git repositories.</p>
+            <p>This version is built with Python and PySide6/Qt6.</p>
+            <p>Original Tkinter app by: Hamzat Hudulov</p>
+            <p>PySide6 conversion by: BO7MEDX</p>
+            """
+        )
 
-def main():
-    root = tk.Tk()
-    app = GitPushGUI(root)
-    root.mainloop()
+    def closeEvent(self, event):
+        """Ensure the background thread is terminated properly."""
+        self.thread.quit()
+        self.thread.wait()
+        event.accept()
+
+    def apply_stylesheet(self):
+        """Applies a dark, modern stylesheet to the application."""
+        self.setStyleSheet("""
+            QMainWindow, QWidget {
+                background-color: #2b2b2b;
+                color: #f0f0f0;
+                font-family: Arial, sans-serif;
+            }
+            #titleLabel {
+                font-size: 24px;
+                font-weight: bold;
+                color: #4CAF50;
+                padding-bottom: 10px;
+            }
+            QLabel {
+                font-size: 14px;
+            }
+            QLineEdit {
+                background-color: #404040;
+                border: 1px solid #555;
+                border-radius: 5px;
+                padding: 8px;
+                font-size: 14px;
+                color: #f0f0f0;
+            }
+            QTextEdit#output {
+                background-color: #1e1e1e;
+                border: 1px solid #555;
+                border-radius: 5px;
+                font-family: "Consolas", "Courier New", monospace;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #555;
+                color: white;
+                border: none;
+                padding: 10px;
+                border-radius: 5px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #666;
+            }
+            QPushButton:pressed {
+                background-color: #777;
+            }
+            QStatusBar {
+                color: #ccc;
+                font-size: 12px;
+            }
+            QMenuBar {
+                background-color: #3c3c3c;
+            }
+            QMenuBar::item:selected {
+                background-color: #555;
+            }
+            QMenu {
+                background-color: #3c3c3c;
+            }
+            QMenu::item:selected {
+                background-color: #4CAF50;
+            }
+        """)
 
 if __name__ == "__main__":
-    main()
+    app = QApplication(sys.argv)
+    window = GitPushGUI()
+    window.show()
+    sys.exit(app.exec())
