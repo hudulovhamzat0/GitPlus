@@ -35,7 +35,7 @@
 
 3.  **Run the app:**
     ```bash
-    python masterpiece_gui.py 
+    python main.py 
     ```
     *(Note: The script name has been updated for the new version)*
 
